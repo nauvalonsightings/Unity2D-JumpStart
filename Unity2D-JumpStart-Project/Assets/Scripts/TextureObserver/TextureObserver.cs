@@ -16,12 +16,15 @@ namespace Unity2DJumpStart
         // Simple data class to hold texture information for the list
         private class TextureData
         {
+            public string path;
             public Texture2D texture;
             public string name;
             public Vector2Int resolution;
             public long sizeBytes;
             public string formattedSize;
             public string compression;
+            public bool isDivisibleBy4;
+            public bool isOptimized;
         }
 
         private List<TextureData> textureList = new List<TextureData>();
@@ -36,8 +39,12 @@ namespace Unity2DJumpStart
         private int itemsPerPage = 20;
         private int currentPage = 0;
 
+        // Tabs and Layout
+        private int currentTab = 0;
+
         // Column Resizing State
-        private float[] colWidths = { 40f, 50f, 200f, 100f, 100f, 120f };
+        private float[] colWidths = { 40f, 50f, 200f, 100f, 100f };
+        private float[] bulkColWidths = { 40f, 40f, 150f, 80f, 80f, 130f, 180f };
         private int resizingColumnIndex = -1;
 
         // Reflection for accurate size
@@ -46,6 +53,20 @@ namespace Unity2DJumpStart
         // Cached GUI Styles for performance
         private GUIStyle centerLabelStyle;
         private GUIStyle leftLabelStyle;
+        private GUIStyle wrappedButtonStyle;
+
+        // Configurable Compression Settings
+        private bool showCompressionConfig = false;
+        private TextureImporterFormat optAndroid = TextureImporterFormat.ETC2_RGBA8;
+        private TextureImporterFormat optIOS = TextureImporterFormat.ASTC_10x10;
+        private TextureImporterFormat optStandalone = TextureImporterFormat.DXT5;
+        private TextureImporterFormat optWebGL = TextureImporterFormat.ASTC_10x10;
+
+        private bool balancedUsesDefault = true;
+        private TextureImporterFormat balAndroid = TextureImporterFormat.ASTC_4x4;
+        private TextureImporterFormat balIOS = TextureImporterFormat.ASTC_4x4;
+        private TextureImporterFormat balStandalone = TextureImporterFormat.DXT1;
+        private TextureImporterFormat balWebGL = TextureImporterFormat.ASTC_4x4;
 
         [MenuItem("Tools/2DJumpStart/TextureObserver")]
         public static void ShowWindow()
@@ -63,9 +84,51 @@ namespace Unity2DJumpStart
             {
                 leftLabelStyle = new GUIStyle(EditorStyles.label) { alignment = TextAnchor.MiddleLeft };
             }
+            if (wrappedButtonStyle == null)
+            {
+                wrappedButtonStyle = new GUIStyle(GUI.skin.button) { wordWrap = true };
+            }
 
             GUILayout.Label("Texture Observer", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox("Scan your project to find large textures. Click an entry to find it in the Project tab.", MessageType.Info);
+
+            EditorGUILayout.Space();
+
+            // Tabs
+            int previousTab = currentTab;
+            currentTab = GUILayout.Toolbar(currentTab, new string[] { "Texture Observer", "Compression Bulk Change" });
+            if (currentTab != previousTab)
+            {
+                // Reset resize state when switching tabs to prevent state corruption
+                resizingColumnIndex = -1;
+            }
+            
+            if (currentTab == 1)
+            {
+                EditorGUILayout.Space();
+                showCompressionConfig = EditorGUILayout.Foldout(showCompressionConfig, "Configure Compression Formats");
+                if (showCompressionConfig)
+                {
+                    EditorGUI.indentLevel++;
+                    EditorGUILayout.LabelField("Optimized Formats", EditorStyles.boldLabel);
+                    optAndroid = (TextureImporterFormat)EditorGUILayout.EnumPopup("Android", optAndroid);
+                    optIOS = (TextureImporterFormat)EditorGUILayout.EnumPopup("iOS", optIOS);
+                    optStandalone = (TextureImporterFormat)EditorGUILayout.EnumPopup("Standalone", optStandalone);
+                    optWebGL = (TextureImporterFormat)EditorGUILayout.EnumPopup("WebGL", optWebGL);
+
+                    EditorGUILayout.Space();
+                    EditorGUILayout.LabelField("Balanced Formats", EditorStyles.boldLabel);
+                    balancedUsesDefault = EditorGUILayout.Toggle("Clear Override (Use Unity Default)", balancedUsesDefault);
+                    if (!balancedUsesDefault)
+                    {
+                        balAndroid = (TextureImporterFormat)EditorGUILayout.EnumPopup("Android", balAndroid);
+                        balIOS = (TextureImporterFormat)EditorGUILayout.EnumPopup("iOS", balIOS);
+                        balStandalone = (TextureImporterFormat)EditorGUILayout.EnumPopup("Standalone", balStandalone);
+                        balWebGL = (TextureImporterFormat)EditorGUILayout.EnumPopup("WebGL", balWebGL);
+                    }
+                    EditorGUI.indentLevel--;
+                }
+            }
 
             EditorGUILayout.Space();
 
@@ -133,7 +196,16 @@ namespace Unity2DJumpStart
                 EditorGUI.EndDisabledGroup();
                 EditorGUILayout.EndHorizontal();
 
-                DrawHeader();
+                if (currentTab == 0)
+                {
+                    string[] headers = { "No.", "Thumb", "Name", "Resolution", "Size", "Format" };
+                    DrawHeader(headers, colWidths);
+                }
+                else
+                {
+                    string[] headers = { "No.", "Thumb", "Name", "Resolution", "Size", "Divisible by 4?", "Action", "Highlight" };
+                    DrawHeader(headers, bulkColWidths);
+                }
                 
                 scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
                 
@@ -142,9 +214,28 @@ namespace Unity2DJumpStart
 
                 for (int i = startIndex; i < endIndex; i++)
                 {
-                    DrawTextureRow(i, filteredTextureList[i]);
+                    if (currentTab == 0) DrawTextureRowObserver(i, filteredTextureList[i]);
+                    else DrawTextureRowBulk(i, filteredTextureList[i]);
                 }
                 EditorGUILayout.EndScrollView();
+
+                // Giant Bulk Buttons at the bottom of the Bulk Tab
+                if (currentTab == 1)
+                {
+                    EditorGUILayout.Space();
+                    EditorGUILayout.BeginHorizontal();
+                    if (GUILayout.Button("Bulk Optimized", GUILayout.Height(40))) 
+                    {
+                        BulkApplyOptimization(true);
+                        GUIUtility.ExitGUI();
+                    }
+                    if (GUILayout.Button("Bulk Balanced Compression", GUILayout.Height(40))) 
+                    {
+                        BulkApplyOptimization(false);
+                        GUIUtility.ExitGUI();
+                    }
+                    EditorGUILayout.EndHorizontal();
+                }
             }
             else
             {
@@ -158,48 +249,46 @@ namespace Unity2DJumpStart
             }
         }
 
-        private void DrawHeader()
+        private void DrawHeader(string[] headers, float[] widths)
         {
             // Use ExpandWidth to ensure the header matches the window width
             Rect headerRect = EditorGUILayout.GetControlRect(false, 20, GUILayout.ExpandWidth(true));
-            string[] headers = { "No.", "Thumb", "Name", "Resolution", "Size", "Format" };
             
             float currentX = headerRect.x;
-            for (int i = 0; i < colWidths.Length; i++)
+
+            // Draw the fixed-width headers (all except the last one)
+            for (int i = 0; i < widths.Length; i++)
             {
-                // If it's the last column, calculate remaining width instead of using colWidths[i]
-                float width = (i == colWidths.Length - 1) 
-                    ? Mathf.Max(50, headerRect.width - (currentX - headerRect.x)) 
-                    : colWidths[i];
-
-                Rect colRect = new Rect(currentX, headerRect.y, width, headerRect.height);
-                
-                // Draw header box and label
+                Rect colRect = new Rect(currentX, headerRect.y, widths[i], headerRect.height);
                 GUI.Box(colRect, headers[i], EditorStyles.toolbarButton);
-                
-                // Handle Resizing (Only for columns 0 to 4)
-                if (i < colWidths.Length - 1)
+
+                // Draw resize handle for this column
+                Rect resizeHandleRect = new Rect(currentX + widths[i] - 2, headerRect.y, 4, headerRect.height);
+                EditorGUIUtility.AddCursorRect(resizeHandleRect, MouseCursor.ResizeHorizontal);
+                if (Event.current.type == EventType.MouseDown && resizeHandleRect.Contains(Event.current.mousePosition))
                 {
-                    Rect resizeHandleRect = new Rect(currentX + width - 2, headerRect.y, 4, headerRect.height);
-                    EditorGUIUtility.AddCursorRect(resizeHandleRect, MouseCursor.ResizeHorizontal);
-
-                    if (Event.current.type == EventType.MouseDown && resizeHandleRect.Contains(Event.current.mousePosition))
-                    {
-                        resizingColumnIndex = i;
-                    }
+                    resizingColumnIndex = i;
                 }
-
-                currentX += width;
+                currentX += widths[i];
             }
+
+            // Draw the last, stretchy header
+            float lastColWidth = Mathf.Max(50, headerRect.width - currentX);
+            Rect lastColRect = new Rect(currentX, headerRect.y, lastColWidth, headerRect.height);
+            GUI.Box(lastColRect, headers[headers.Length - 1], EditorStyles.toolbarButton);
 
             // Global mouse events for resizing
             if (resizingColumnIndex != -1)
             {
                 if (Event.current.type == EventType.MouseDrag)
                 {
-                    colWidths[resizingColumnIndex] += Event.current.delta.x;
-                    colWidths[resizingColumnIndex] = Mathf.Max(20, colWidths[resizingColumnIndex]);
-                    Repaint();
+                    // Check bounds before accessing, just in case
+                    if (resizingColumnIndex < widths.Length)
+                    {
+                        widths[resizingColumnIndex] += Event.current.delta.x;
+                        widths[resizingColumnIndex] = Mathf.Max(20, widths[resizingColumnIndex]);
+                        Repaint();
+                    }
                 }
                 else if (Event.current.type == EventType.MouseUp)
                 {
@@ -208,7 +297,7 @@ namespace Unity2DJumpStart
             }
         }
 
-        private void DrawTextureRow(int index, TextureData data)
+        private void DrawTextureRowObserver(int index, TextureData data)
         {
             // Use a button style for the whole row to make it interactive
             Rect rowRect = EditorGUILayout.GetControlRect(false, 40, GUILayout.ExpandWidth(true));
@@ -221,7 +310,12 @@ namespace Unity2DJumpStart
 
             float x = rowRect.x;
             GUI.Label(new Rect(x, rowRect.y + 12, colWidths[0], 20), (index + 1).ToString(), centerLabelStyle); x += colWidths[0];
-            GUI.DrawTexture(new Rect(x + (colWidths[1]-30)/2, rowRect.y + 5, 30, 30), data.texture, ScaleMode.ScaleToFit); x += colWidths[1];
+            
+            Texture2D thumb = AssetPreview.GetAssetPreview(data.texture);
+            if (thumb == null) thumb = AssetPreview.GetMiniThumbnail(data.texture);
+            if (thumb == null) thumb = data.texture;
+            
+            GUI.DrawTexture(new Rect(x + (colWidths[1]-30)/2, rowRect.y + 5, 30, 30), thumb, ScaleMode.ScaleToFit); x += colWidths[1];
             GUI.Label(new Rect(x + 5, rowRect.y + 12, colWidths[2] - 5, 20), data.name, leftLabelStyle); x += colWidths[2];
             GUI.Label(new Rect(x, rowRect.y + 12, colWidths[3], 20), $"{data.resolution.x}x{data.resolution.y}", centerLabelStyle); x += colWidths[3];
             GUI.Label(new Rect(x, rowRect.y + 12, colWidths[4], 20), data.formattedSize, centerLabelStyle); x += colWidths[4];
@@ -229,6 +323,44 @@ namespace Unity2DJumpStart
             // The last column fills the remaining width of the rowRect
             float lastColWidth = rowRect.width - (x - rowRect.x);
             GUI.Label(new Rect(x, rowRect.y + 12, lastColWidth, 20), data.compression, centerLabelStyle);
+        }
+
+        private void DrawTextureRowBulk(int index, TextureData data)
+        {
+            Rect rowRect = EditorGUILayout.GetControlRect(false, 40, GUILayout.ExpandWidth(true));
+            
+            float x = rowRect.x;
+            GUI.Label(new Rect(x, rowRect.y + 12, bulkColWidths[0], 20), (index + 1).ToString(), centerLabelStyle); x += bulkColWidths[0];
+            
+            Texture2D thumb = AssetPreview.GetAssetPreview(data.texture);
+            if (thumb == null) thumb = AssetPreview.GetMiniThumbnail(data.texture);
+            if (thumb == null) thumb = data.texture;
+            
+            GUI.DrawTexture(new Rect(x + (bulkColWidths[1]-30)/2, rowRect.y + 5, 30, 30), thumb, ScaleMode.ScaleToFit); x += bulkColWidths[1];
+            GUI.Label(new Rect(x + 5, rowRect.y + 12, bulkColWidths[2] - 5, 20), data.name, leftLabelStyle); x += bulkColWidths[2];
+            GUI.Label(new Rect(x, rowRect.y + 12, bulkColWidths[3], 20), $"{data.resolution.x}x{data.resolution.y}", centerLabelStyle); x += bulkColWidths[3];
+            GUI.Label(new Rect(x, rowRect.y + 12, bulkColWidths[4], 20), data.formattedSize, centerLabelStyle); x += bulkColWidths[4];
+            
+            string divisibleText = data.isDivisibleBy4 ? "Yes" : "No, Not dividable by 4";
+            GUI.Label(new Rect(x, rowRect.y + 12, bulkColWidths[5], 20), divisibleText, centerLabelStyle); x += bulkColWidths[5];
+            
+            string btnText = data.isOptimized ? "Restore to the balanced settings" : "Set To Lightest Settings";
+            
+            // Fallback to 180f if the array is missing the 7th element
+            float actionWidth = bulkColWidths.Length > 6 ? bulkColWidths[6] : 180f;
+            if (GUI.Button(new Rect(x + 5, rowRect.y + 2, actionWidth - 10, 36), btnText, wrappedButtonStyle))
+            {
+                ApplyOptimization(data, !data.isOptimized);
+                GUIUtility.ExitGUI();
+            }
+            x += actionWidth;
+
+            float lastColWidth = rowRect.width - (x - rowRect.x);
+            if (GUI.Button(new Rect(x + 5, rowRect.y + 10, lastColWidth - 10, 20), "Go-To"))
+            {
+                EditorGUIUtility.PingObject(data.texture);
+                Selection.activeObject = data.texture;
+            }
         }
 
         private long GetStorageSize(Texture2D tex)
@@ -302,12 +434,15 @@ namespace Unity2DJumpStart
                     
                     textureList.Add(new TextureData
                     {
+                        path = path,
                         texture = tex,
                         name = tex.name,
                         resolution = new Vector2Int(tex.width, tex.height),
                         sizeBytes = bytes,
                         formattedSize = FormatBytes(bytes),
-                        compression = tex.format.ToString()
+                        compression = tex.format.ToString(),
+                        isDivisibleBy4 = (tex.width % 4 == 0) && (tex.height % 4 == 0),
+                        isOptimized = IsTextureOptimized(path)
                     });
                 }
             }
@@ -335,6 +470,96 @@ namespace Unity2DJumpStart
                 }
             }
             currentPage = 0;
+        }
+
+        private bool IsTextureOptimized(string path)
+        {
+            TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+            if (importer == null) return false;
+
+            string activePlatform = EditorUserBuildSettings.activeBuildTarget.ToString();
+            string platformKey = "Standalone";
+            TextureImporterFormat targetFormat = optStandalone;
+
+            if (activePlatform == "Android") { platformKey = "Android"; targetFormat = optAndroid; }
+            else if (activePlatform == "iPhone" || activePlatform == "iOS") { platformKey = "iPhone"; targetFormat = optIOS; }
+            else if (activePlatform == "WebGL") { platformKey = "WebGL"; targetFormat = optWebGL; }
+
+            var settings = importer.GetPlatformTextureSettings(platformKey);
+            
+            // If overridden, check if it matches our configured optimized format exactly
+            if (settings.overridden)
+            {
+                return settings.format == targetFormat;
+            }
+            
+            return false;
+        }
+
+        private void ApplyOptimization(TextureData data, bool optimize)
+        {
+            TextureImporter importer = AssetImporter.GetAtPath(data.path) as TextureImporter;
+            if (importer == null) return;
+
+            if (optimize)
+            {
+                SetPlatformOptimized(importer, "Android", optAndroid);
+                SetPlatformOptimized(importer, "iPhone", optIOS);
+                SetPlatformOptimized(importer, "Standalone", optStandalone);
+                SetPlatformOptimized(importer, "WebGL", optWebGL);
+            }
+            else
+            {
+                if (balancedUsesDefault)
+                {
+                    importer.ClearPlatformTextureSettings("Android");
+                    importer.ClearPlatformTextureSettings("iPhone");
+                    importer.ClearPlatformTextureSettings("Standalone");
+                    importer.ClearPlatformTextureSettings("WebGL");
+                }
+                else
+                {
+                    SetPlatformOptimized(importer, "Android", balAndroid);
+                    SetPlatformOptimized(importer, "iPhone", balIOS);
+                    SetPlatformOptimized(importer, "Standalone", balStandalone);
+                    SetPlatformOptimized(importer, "WebGL", balWebGL);
+                }
+            }
+
+            importer.SaveAndReimport();
+            data.isOptimized = optimize;
+            
+            // Refresh data fields
+            Texture2D tex = AssetDatabase.LoadAssetAtPath<Texture2D>(data.path);
+            if (tex != null)
+            {
+                data.sizeBytes = GetStorageSize(tex);
+                data.formattedSize = FormatBytes(data.sizeBytes);
+                data.compression = tex.format.ToString();
+            }
+        }
+
+        private void SetPlatformOptimized(TextureImporter importer, string platform, TextureImporterFormat format)
+        {
+            var settings = importer.GetPlatformTextureSettings(platform);
+            settings.overridden = true;
+            settings.format = format;
+            importer.SetPlatformTextureSettings(settings);
+        }
+
+        private void BulkApplyOptimization(bool optimize)
+        {
+            int count = filteredTextureList.Count;
+            for (int i = 0; i < count; i++)
+            {
+                EditorUtility.DisplayProgressBar("Bulk Updating Textures", $"Processing {filteredTextureList[i].name} ({i + 1}/{count})", (float)i / count);
+                
+                if (filteredTextureList[i].isOptimized != optimize)
+                {
+                    ApplyOptimization(filteredTextureList[i], optimize);
+                }
+            }
+            EditorUtility.ClearProgressBar();
         }
 
         private string FormatBytes(long bytes)
