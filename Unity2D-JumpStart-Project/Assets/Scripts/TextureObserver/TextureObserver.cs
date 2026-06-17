@@ -26,6 +26,11 @@ namespace Unity2DJumpStart
 
         private List<TextureData> textureList = new List<TextureData>();
         private Vector2 scrollPosition;
+
+        // Search and Target Folders
+        private string searchQuery = "";
+        private List<TextureData> filteredTextureList = new List<TextureData>();
+        private List<DefaultAsset> targetFolders = new List<DefaultAsset>();
         
         // Pagination and Sorting
         private int itemsPerPage = 20;
@@ -62,20 +67,55 @@ namespace Unity2DJumpStart
             GUILayout.Label("Texture Observer", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox("Scan your project to find large textures. Click an entry to find it in the Project tab.", MessageType.Info);
 
+            EditorGUILayout.Space();
+
+            // Search Bar
+            EditorGUI.BeginChangeCheck();
+            searchQuery = EditorGUILayout.TextField("Search Name", searchQuery);
+            if (EditorGUI.EndChangeCheck())
+            {
+                ApplySearchFilter();
+            }
+
+            EditorGUILayout.Space();
+
+            // Target Folders Layout
+            EditorGUILayout.LabelField("Target Folders (Leave empty to scan entire project):");
+            for (int i = 0; i < targetFolders.Count; i++)
+            {
+                EditorGUILayout.BeginHorizontal();
+                targetFolders[i] = (DefaultAsset)EditorGUILayout.ObjectField(targetFolders[i], typeof(DefaultAsset), false);
+                if (GUILayout.Button("X", GUILayout.Width(25)))
+                {
+                    targetFolders.RemoveAt(i);
+                    i--;
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+            
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Add Folder Slot", GUILayout.Width(120)))
+            {
+                targetFolders.Add(null);
+            }
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.Space();
+
             EditorGUILayout.BeginHorizontal();
             itemsPerPage = Mathf.Max(1, EditorGUILayout.IntField("Items Per Page", itemsPerPage));
             
-            if (GUILayout.Button("Scan Project Textures", GUILayout.Height(21)))
+            if (GUILayout.Button("Populate Textures", GUILayout.Height(21)))
             {
                 ScanTextures();
-                currentPage = 0;
                 GUIUtility.ExitGUI();
             }
             EditorGUILayout.EndHorizontal();
 
-            if (textureList.Count > 0)
+            if (filteredTextureList.Count > 0)
             {
-                int totalPages = Mathf.CeilToInt((float)textureList.Count / itemsPerPage);
+                int totalPages = Mathf.CeilToInt((float)filteredTextureList.Count / itemsPerPage);
                 currentPage = Mathf.Clamp(currentPage, 0, Mathf.Max(0, totalPages - 1));
 
                 // Pagination Navigation
@@ -85,7 +125,7 @@ namespace Unity2DJumpStart
                 EditorGUI.EndDisabledGroup();
 
                 GUILayout.FlexibleSpace();
-                GUILayout.Label($"Page {currentPage + 1} of {totalPages} ({textureList.Count} total textures)");
+                GUILayout.Label($"Page {currentPage + 1} of {totalPages} ({filteredTextureList.Count} total textures)");
                 GUILayout.FlexibleSpace();
 
                 EditorGUI.BeginDisabledGroup(currentPage >= totalPages - 1);
@@ -98,11 +138,11 @@ namespace Unity2DJumpStart
                 scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
                 
                 int startIndex = currentPage * itemsPerPage;
-                int endIndex = Mathf.Min(startIndex + itemsPerPage, textureList.Count);
+                int endIndex = Mathf.Min(startIndex + itemsPerPage, filteredTextureList.Count);
 
                 for (int i = startIndex; i < endIndex; i++)
                 {
-                    DrawTextureRow(i, textureList[i]);
+                    DrawTextureRow(i, filteredTextureList[i]);
                 }
                 EditorGUILayout.EndScrollView();
             }
@@ -230,8 +270,26 @@ namespace Unity2DJumpStart
         {
             textureList.Clear();
 
-            // Find all texture assets in the Assets folder
-            string[] guids = AssetDatabase.FindAssets("t:Texture2D", new[] { "Assets" });
+            List<string> searchPaths = new List<string>();
+            foreach (var folder in targetFolders)
+            {
+                if (folder != null)
+                {
+                    string path = AssetDatabase.GetAssetPath(folder);
+                    if (AssetDatabase.IsValidFolder(path))
+                    {
+                        searchPaths.Add(path);
+                    }
+                }
+            }
+
+            if (searchPaths.Count == 0)
+            {
+                searchPaths.Add("Assets");
+            }
+
+            // Find all texture assets in the targeted paths
+            string[] guids = AssetDatabase.FindAssets("t:Texture2D", searchPaths.ToArray());
 
             foreach (string guid in guids)
             {
@@ -256,6 +314,27 @@ namespace Unity2DJumpStart
 
             // Sort by size descending (largest first)
             textureList.Sort((a, b) => b.sizeBytes.CompareTo(a.sizeBytes));
+            
+            // Apply the filter instantly so the UI populates
+            ApplySearchFilter();
+        }
+
+        private void ApplySearchFilter()
+        {
+            filteredTextureList.Clear();
+            if (string.IsNullOrEmpty(searchQuery))
+            {
+                filteredTextureList.AddRange(textureList);
+            }
+            else
+            {
+                string lowerQuery = searchQuery.ToLower();
+                foreach (var tex in textureList)
+                {
+                    if (tex.name.ToLower().Contains(lowerQuery)) filteredTextureList.Add(tex);
+                }
+            }
+            currentPage = 0;
         }
 
         private string FormatBytes(long bytes)
