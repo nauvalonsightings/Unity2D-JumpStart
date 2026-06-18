@@ -12,7 +12,8 @@ namespace Unity2DJumpStart
         private enum Tab
         {
             BatchRenamer = 0,
-            ParenthesesRemover = 1
+            ParenthesesRemover = 1,
+            NumberFormatter = 2
         }
 
         private enum RenameMode
@@ -26,6 +27,13 @@ namespace Unity2DJumpStart
             Parentheses = 0,
             Square = 1,
             Curly = 2
+        }
+
+        private enum NumberBridge
+        {
+            Hyphen = 0,
+            Underscore = 1,
+            Hash = 2
         }
 
         private enum AssetTypeFilter
@@ -60,6 +68,7 @@ namespace Unity2DJumpStart
         private bool _includeSubfolders = true;
 
         private BracketPair _bracketPair = BracketPair.Parentheses;
+        private NumberBridge _numberBridge = NumberBridge.Hyphen;
 
         private readonly List<RenameEntry> _previewEntries = new List<RenameEntry>(128);
         private Vector2 _scroll;
@@ -78,7 +87,7 @@ namespace Unity2DJumpStart
             EditorGUILayout.HelpBox("Switch between batch rename and bracket removal in the same window.", MessageType.Info);
 
             EditorGUI.BeginChangeCheck();
-            _tab = (Tab)GUILayout.Toolbar((int)_tab, new[] { "Batch Renamer", "Parentheses Remover" });
+            _tab = (Tab)GUILayout.Toolbar((int)_tab, new[] { "Batch Renamer", "Parentheses Remover", "Number Formatter" });
             if (EditorGUI.EndChangeCheck())
             {
                 _scroll = Vector2.zero;
@@ -103,9 +112,13 @@ namespace Unity2DJumpStart
                 _from = EditorGUILayout.TextField("From", _from);
                 _changeInto = EditorGUILayout.TextField("Change Into", _changeInto);
             }
-            else
+            else if (_tab == Tab.ParenthesesRemover)
             {
                 _bracketPair = (BracketPair)EditorGUILayout.EnumPopup("Bracket Pair", _bracketPair);
+            }
+            else
+            {
+                _numberBridge = (NumberBridge)EditorGUILayout.EnumPopup("Bridge", _numberBridge);
             }
 
             if (EditorGUI.EndChangeCheck())
@@ -239,7 +252,9 @@ namespace Unity2DJumpStart
                 string newName;
                 bool matchesRule = _tab == Tab.BatchRenamer
                     ? TryBuildBatchRename(fileName, out newName)
-                    : TryBuildBracketRemoval(fileName, out newName);
+                    : _tab == Tab.ParenthesesRemover
+                        ? TryBuildBracketRemoval(fileName, out newName)
+                        : TryBuildNumberFormatter(fileName, out newName);
 
                 if (!matchesRule || string.IsNullOrEmpty(newName))
                 {
@@ -250,7 +265,7 @@ namespace Unity2DJumpStart
                         NewName = string.Empty,
                         IsFolder = isFolder,
                         IsValid = false,
-                        Error = matchesRule ? "Resulting name is empty." : _tab == Tab.BatchRenamer ? "Name does not match the selected prefix/postfix rule." : "Name does not contain the selected bracket pair."
+                        Error = matchesRule ? "Resulting name is empty." : _tab == Tab.BatchRenamer ? "Name does not match the selected prefix/postfix rule." : _tab == Tab.ParenthesesRemover ? "Name does not contain the selected bracket pair." : "Name does not end with a number."
                     });
                     continue;
                 }
@@ -458,6 +473,80 @@ namespace Unity2DJumpStart
 
             result = NormalizeWhitespace(SanitizeName(builder.ToString()));
             return sawContentInsidePair || !string.Equals(result, currentName, StringComparison.Ordinal);
+        }
+
+        private bool TryBuildNumberFormatter(string currentName, out string result)
+        {
+            int end = currentName.Length - 1;
+            while (end >= 0 && char.IsWhiteSpace(currentName[end]))
+            {
+                end--;
+            }
+
+            if (end < 0 || !char.IsDigit(currentName[end]))
+            {
+                result = currentName;
+                return false;
+            }
+
+            int numberEnd = end;
+            while (end >= 0 && char.IsDigit(currentName[end]))
+            {
+                end--;
+            }
+
+            int numberStart = end + 1;
+            if (numberStart <= 0)
+            {
+                result = currentName;
+                return false;
+            }
+
+            int separatorEnd = numberStart - 1;
+            while (separatorEnd >= 0 && char.IsWhiteSpace(currentName[separatorEnd]))
+            {
+                separatorEnd--;
+            }
+
+            if (separatorEnd < 0)
+            {
+                result = currentName;
+                return false;
+            }
+
+            int separatorStart = separatorEnd;
+            while (separatorStart >= 0 && !char.IsLetterOrDigit(currentName[separatorStart]))
+            {
+                separatorStart--;
+            }
+
+            separatorStart++;
+
+            char bridge;
+            switch (_numberBridge)
+            {
+                case NumberBridge.Underscore:
+                    bridge = '_';
+                    break;
+                case NumberBridge.Hash:
+                    bridge = '#';
+                    break;
+                default:
+                    bridge = '-';
+                    break;
+            }
+
+            string prefix = currentName.Substring(0, separatorStart).TrimEnd();
+            string suffix = currentName.Substring(numberStart, numberEnd - numberStart + 1);
+
+            if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(suffix))
+            {
+                result = currentName;
+                return false;
+            }
+
+            result = SanitizeName(prefix) + bridge + suffix;
+            return !string.Equals(result, currentName, StringComparison.Ordinal);
         }
 
         private static string SanitizeName(string value)
