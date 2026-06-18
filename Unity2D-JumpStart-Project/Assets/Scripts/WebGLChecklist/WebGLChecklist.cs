@@ -164,6 +164,24 @@ namespace Unity2DJumpStart
             SetWebGLSettingValue("decompressionFallback", true);
             SetWebGLSettingValue("memoryGrowthMode", "Linear");
 
+            PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.WebGL, true);
+            PlayerSettings.gpuSkinning = true;
+
+            if (HasPlayerSettingsMethod("SetStaticBatchingForPlatform", GetBuildTargetArg(), true))
+            {
+                PlayerSettings.SetStaticBatchingForPlatform(EditorUserBuildSettings.activeBuildTarget, true);
+            }
+
+            if (HasPlayerSettingsMethod("SetDynamicBatchingForPlatform", GetBuildTargetArg(), true))
+            {
+                PlayerSettings.SetDynamicBatchingForPlatform(EditorUserBuildSettings.activeBuildTarget, true);
+            }
+
+            if (HasPlayerSettingsProperty("graphicsJobs"))
+            {
+                PlayerSettings.graphicsJobs = true;
+            }
+
             object il2CppCodeGen = FindEnumValue("UnityEditor.Il2CppCodeGeneration", "Faster", "OptimizeSize", "Size", "BuildTime");
             if (il2CppCodeGen != null)
             {
@@ -175,6 +193,8 @@ namespace Unity2DJumpStart
             {
                 InvokePlayerSettingsSetter("SetManagedStrippingLevel", GetBuildTargetArg(), strippingLevel);
             }
+
+            SetWebGLSettingValue("prebakeCollisionMeshes", true);
 
             AssetDatabase.SaveAssets();
             EditorUtility.DisplayDialog("WebGL Checklist", "Recommended WebGL settings were applied where the Unity version exposed writable APIs.", "OK");
@@ -330,6 +350,16 @@ namespace Unity2DJumpStart
             }
 
             return null;
+        }
+
+        private static bool HasPlayerSettingsMethod(string methodName, params object[] args)
+        {
+            return FindPlayerSettingsMethod(methodName, args) != null;
+        }
+
+        private static bool HasPlayerSettingsProperty(string propertyName)
+        {
+            return GetPlayerSettingsType().GetProperty(propertyName, Flags) != null;
         }
 
         private static object GetBuildTargetArg()
