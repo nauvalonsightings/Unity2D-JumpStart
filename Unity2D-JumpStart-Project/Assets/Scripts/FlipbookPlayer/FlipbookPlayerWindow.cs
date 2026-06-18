@@ -168,7 +168,7 @@ namespace Unity2DJumpStart
 
         private void DrawSpriteDropArea()
         {
-            Rect dropRect = GUILayoutUtility.GetRect(0f, 54f, GUILayout.ExpandWidth(true));
+            Rect dropRect = GUILayoutUtility.GetRect(GUIContent.none, GUIStyle.none, GUILayout.Height(54f), GUILayout.ExpandWidth(true));
             Event currentEvent = Event.current;
 
             bool hover = dropRect.Contains(currentEvent.mousePosition);
@@ -176,19 +176,14 @@ namespace Unity2DJumpStart
             Color border = hover ? new Color(0.42f, 0.65f, 0.85f) : new Color(0.33f, 0.33f, 0.33f);
 
             EditorGUI.DrawRect(dropRect, fill);
-            Handles.BeginGUI();
-            Handles.color = border;
-            Handles.DrawAAPolyLine(2f,
-                new Vector3(dropRect.x, dropRect.y),
-                new Vector3(dropRect.xMax, dropRect.y),
-                new Vector3(dropRect.xMax, dropRect.yMax),
-                new Vector3(dropRect.x, dropRect.yMax),
-                new Vector3(dropRect.x, dropRect.y));
-            Handles.EndGUI();
+            EditorGUI.DrawRect(new Rect(dropRect.x, dropRect.y, dropRect.width, 1f), border);
+            EditorGUI.DrawRect(new Rect(dropRect.x, dropRect.yMax - 1f, dropRect.width, 1f), border);
+            EditorGUI.DrawRect(new Rect(dropRect.x, dropRect.y, 1f, dropRect.height), border);
+            EditorGUI.DrawRect(new Rect(dropRect.xMax - 1f, dropRect.y, 1f, dropRect.height), border);
 
             GUI.Label(dropRect, "Drag and drop Sprite assets here\nMulti-select supported", _centerLabelStyle);
 
-            if (!hover)
+            if (!hover || currentEvent == null)
             {
                 return;
             }
@@ -199,32 +194,34 @@ namespace Unity2DJumpStart
                 return;
             }
 
-            bool hasSprite = false;
-            for (int i = 0; i < DragAndDrop.objectReferences.Length; i++)
+            UnityEngine.Object[] draggedObjects = DragAndDrop.objectReferences;
+            if (draggedObjects == null || draggedObjects.Length == 0)
             {
-                if (DragAndDrop.objectReferences[i] is Sprite)
+                return;
+            }
+
+            bool canAccept = false;
+            for (int i = 0; i < draggedObjects.Length; i++)
+            {
+                if (draggedObjects[i] is Sprite || draggedObjects[i] is Texture2D || draggedObjects[i] is DefaultAsset)
                 {
-                    hasSprite = true;
+                    canAccept = true;
                     break;
                 }
             }
 
-            if (!hasSprite)
+            if (!canAccept)
             {
                 return;
             }
 
             DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+            currentEvent.Use();
 
             if (type == EventType.DragPerform)
             {
                 DragAndDrop.AcceptDrag();
-                AppendDraggedSprites(DragAndDrop.objectReferences);
-                currentEvent.Use();
-            }
-            else
-            {
-                currentEvent.Use();
+                AppendDraggedSprites(draggedObjects);
             }
         }
 
@@ -233,9 +230,35 @@ namespace Unity2DJumpStart
             bool changed = false;
             for (int i = 0; i < draggedObjects.Length; i++)
             {
-                if (draggedObjects[i] is Sprite sprite)
+                Sprite sprite = draggedObjects[i] as Sprite;
+                if (sprite != null)
                 {
                     _sequenceSprites.Add(sprite);
+                    changed = true;
+                    continue;
+                }
+
+                string assetPath = AssetDatabase.GetAssetPath(draggedObjects[i]);
+                if (string.IsNullOrEmpty(assetPath))
+                {
+                    continue;
+                }
+
+                UnityEngine.Object[] representations = AssetDatabase.LoadAllAssetRepresentationsAtPath(assetPath);
+                for (int j = 0; j < representations.Length; j++)
+                {
+                    Sprite slicedSprite = representations[j] as Sprite;
+                    if (slicedSprite != null)
+                    {
+                        _sequenceSprites.Add(slicedSprite);
+                        changed = true;
+                    }
+                }
+
+                Sprite mainSprite = AssetDatabase.LoadAssetAtPath<Sprite>(assetPath);
+                if (mainSprite != null)
+                {
+                    _sequenceSprites.Add(mainSprite);
                     changed = true;
                 }
             }
