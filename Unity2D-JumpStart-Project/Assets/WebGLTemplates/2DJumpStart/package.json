@@ -1,0 +1,31 @@
+{
+  "name": "JumpStartWeb",
+  "version": "1.0.0",
+  "description": "Optimized 2D WebGL Template with auto-scaling, pixel art support, and audio-unlocking.",
+  "unity": "2020.1",
+  "customProperties": [
+    {
+      "name": "ScaleToFit",
+      "displayName": "Scale Game To Fit Window",
+      "type": "checkbox",
+      "defaultValue": true
+    },
+    {
+      "name": "OptimizeForPixelArt",
+      "displayName": "Optimize For Pixel Art (Crisp Edges)",
+      "type": "checkbox",
+      "defaultValue": true
+    },
+    {
+      "name": "EnableTelegramSDK",
+      "displayName": "Enable Telegram Mini-App SDK",
+      "type": "checkbox",
+      "defaultValue": false
+    },
+    {
+      "name": "LoadingIcon",
+      "displayName": "Loading Icon (Optional)",
+      "type": "file"
+    }
+  ]
+}

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes">
+    <title>{{{ PRODUCT_NAME }}}</title>
+
+#if EnableTelegramSDK
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+        var tgAuthValue = "None";
+        function getTelegramAuth() { return tgAuthValue; }
+        
+        if (typeof window.Telegram !== 'undefined' && window.Telegram.WebApp) {
+            try {
+                window.Telegram.WebApp.expand();
+                tgAuthValue = window.Telegram.WebApp.initData || "Not Found";
+            } catch(e) {
+                console.warn("Telegram API init bypassed (Not running in Telegram context).");
+            }
+        }
+    </script>
+#endif
+
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: {{{ BACKGROUND || '#181818' }}};
+            overflow: hidden;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        }
+        
+        #app-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #unity-canvas {
+            position: absolute;
+            outline: none;
+        }
+        
+#if OptimizeForPixelArt
+        #unity-canvas {
+            image-rendering: optimizeSpeed;
+            image-rendering: -webkit-crisp-edges;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            image-rendering: pixelated;
+            -ms-interpolation-mode: nearest-neighbor;
+        }
+#endif
+
+        #loader-ui {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            z-index: 100;
+        }
+        
+        #loader-logo {
+            max-width: 150px;
+            height: auto;
+        }
+        
+        #progress-track {
+            width: 250px;
+            height: 10px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        #progress-fill {
+            width: 0%;
+            height: 100%;
+            background: #ffffff;
+            box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
+            transition: width 0.15s ease-out;
+        }
+        
+        #loader-text {
+            color: #ffffff;
+            font-size: 16px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <div id="loader-ui">
+#if LoadingIcon
+            <img id="loader-logo" src="{{{ LoadingIcon }}}" alt="Loading Logo">
+#endif
+            <div id="loader-text">Loading game...</div>
+            <div id="progress-track">
+                <div id="progress-fill"></div>
+            </div>
+        </div>
+        <canvas id="unity-canvas"></canvas>
+    </div>
+
+    <script src="Build/{{{ LOADER_FILENAME }}}"></script>
+    <script>
+        const canvas = document.getElementById('unity-canvas');
+        const loaderUi = document.getElementById('loader-ui');
+        const progressFill = document.getElementById('progress-fill');
+        const loaderText = document.getElementById('loader-text');
+        
+        const buildConfig = {
+            dataUrl: "Build/{{{ DATA_FILENAME }}}",
+            frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}",
+            codeUrl: "Build/{{{ CODE_FILENAME }}}",
+#if MEMORY_FILENAME
+            memoryUrl: "Build/{{{ MEMORY_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+            symbolsUrl: "Build/{{{ SYMBOLS_FILENAME }}}",
+#endif
+            streamingAssetsUrl: "StreamingAssets",
+            companyName: "{{{ COMPANY_NAME }}}",
+            productName: "{{{ PRODUCT_NAME }}}",
+            productVersion: "{{{ PRODUCT_VERSION }}}",
+            ALLOW_MEMORY_GROWTH: true
+        };
+
+        // Simple Text Animator
+        let dots = 0;
+        const dotInterval = setInterval(() => {
+            dots = (dots + 1) % 4;
+            loaderText.innerText = "Loading game" + ".".repeat(dots);
+        }, 500);
+
+        // Canvas Resizer
+        function resizeCanvas() {
+#if ScaleToFit
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+            const targetRatio = {{{ HEIGHT }}} / {{{ WIDTH }}};
+            
+            let canvasWidth = windowWidth;
+            let canvasHeight = windowWidth * targetRatio;
+            
+            if (canvasHeight > windowHeight) {
+                canvasHeight = windowHeight;
+                canvasWidth = canvasHeight / targetRatio;
+            }
+            
+            canvas.style.width = Math.floor(canvasWidth) + "px";
+            canvas.style.height = Math.floor(canvasHeight) + "px";
+#else
+            canvas.style.width = "{{{ WIDTH }}}px";
+            canvas.style.height = "{{{ HEIGHT }}}px";
+#endif
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // AudioContext Unlocker: Fixes 'Silent WebGL Game' issues in modern browsers
+        const unlockAudio = () => {
+            if (window.sysAudioContext && window.sysAudioContext.state === 'suspended') {
+                window.sysAudioContext.resume();
+            }
+            document.removeEventListener('click', unlockAudio);
+            document.removeEventListener('keydown', unlockAudio);
+            document.removeEventListener('touchstart', unlockAudio);
+        };
+        document.addEventListener('click', unlockAudio);
+        document.addEventListener('keydown', unlockAudio);
+        document.addEventListener('touchstart', unlockAudio);
+
+        // Boot Unity Engine
+        createUnityInstance(canvas, buildConfig, (progress) => {
+            progressFill.style.width = (progress * 100) + '%';
+        }).then((unityInstance) => {
+            clearInterval(dotInterval);
+            loaderUi.style.display = "none";
+            
+            // Auto-focus canvas so keyboard controls work instantly
+            canvas.focus(); 
+            
+            // Capture audio context if available
+            if (unityInstance.Module && unityInstance.Module.WEBAudio) {
+                window.sysAudioContext = unityInstance.Module.WEBAudio.audioContext;
+            }
+        }).catch((message) => {
+            alert(message);
+        });
+    </script>
+</body>
+</html>
