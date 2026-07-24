@@ -7,7 +7,7 @@ using UnityEngine;
 namespace Unity2DJumpStart
 {
     /// <summary>
-    /// Applies the same 9-slice border values to multiple single-sprite textures.
+    /// Applies the same 9-slice border values to multiple sprite textures.
     /// </summary>
     public sealed class TextureBulkSlicerWindow : EditorWindow
     {
@@ -15,6 +15,12 @@ namespace Unity2DJumpStart
         {
             Folder,
             Selection
+        }
+
+        private enum SliceTab
+        {
+            SingleSprite,
+            MultipleSprites
         }
 
         private sealed class TextureData
@@ -25,12 +31,15 @@ namespace Unity2DJumpStart
             public string folder;
             public Vector2Int size;
             public Vector4 currentBorder;
+            public int spriteCount;
+            public bool hasMixedBorders;
             public bool canApply;
             public string skipReason;
         }
 
         private const string MenuPath = "Tools/2DJumpStart/Texture Bulk Slicer";
 
+        [SerializeField] private SliceTab currentTab = SliceTab.SingleSprite;
         [SerializeField] private TargetMode targetMode = TargetMode.Folder;
         [SerializeField] private DefaultAsset targetFolder;
         [SerializeField] private float leftBorder;
@@ -64,8 +73,19 @@ namespace Unity2DJumpStart
             EnsureStyles();
 
             GUILayout.Label("Texture Bulk Slicer", EditorStyles.boldLabel);
+            SliceTab previousTab = currentTab;
+            currentTab = (SliceTab)GUILayout.Toolbar((int)currentTab, new[] { "Single Sprite", "Multiple Sprites" });
+            if (previousTab != currentTab)
+            {
+                textures.Clear();
+                currentPage = 0;
+                statusMessage = "Tab changed. Click Populate Textures to scan the selected target.";
+            }
+
             EditorGUILayout.HelpBox(
-                "Apply the same 9-slice border values to multiple single-sprite textures. Values are measured in pixels.",
+                currentTab == SliceTab.SingleSprite
+                    ? "Apply the same 9-slice border values to multiple single-sprite textures. Values are measured in pixels."
+                    : "Apply the same 9-slice border values to every sprite in multiple-sprite textures. Values are measured in pixels.",
                 MessageType.Info);
 
             EditorGUILayout.Space(4f);
@@ -197,7 +217,7 @@ namespace Unity2DJumpStart
             GUILayout.Label("Texture Name", EditorStyles.toolbarButton, GUILayout.Width(170f));
             GUILayout.Label("Folder Belong", EditorStyles.toolbarButton, GUILayout.Width(190f));
             GUILayout.Label("Resolution", EditorStyles.toolbarButton, GUILayout.Width(95f));
-            GUILayout.Label("Current Border", EditorStyles.toolbarButton, GUILayout.Width(180f));
+            GUILayout.Label(currentTab == SliceTab.SingleSprite ? "Current Border" : "Current Borders", EditorStyles.toolbarButton, GUILayout.Width(180f));
             GUILayout.Label("Status", EditorStyles.toolbarButton, GUILayout.ExpandWidth(true));
             EditorGUILayout.EndHorizontal();
         }
@@ -221,10 +241,13 @@ namespace Unity2DJumpStart
             x += 190f;
             GUI.Label(new Rect(x, rowRect.y + 7f, 95f, 20f), $"{data.size.x}x{data.size.y}", centerLabelStyle);
             x += 95f;
-            GUI.Label(new Rect(x, rowRect.y + 7f, 180f, 20f), FormatBorder(data.currentBorder), centerLabelStyle);
+            string borderText = data.hasMixedBorders ? "Mixed" : FormatBorder(data.currentBorder);
+            GUI.Label(new Rect(x, rowRect.y + 7f, 180f, 20f), borderText, centerLabelStyle);
             x += 180f;
 
-            string status = data.canApply ? "Ready" : data.skipReason;
+            string status = data.canApply
+                ? currentTab == SliceTab.MultipleSprites ? $"Ready ({data.spriteCount} sprites)" : "Ready"
+                : data.skipReason;
             GUI.Label(new Rect(x + 5f, rowRect.y + 7f, rowRect.width - (x - rowRect.x) - 5f, 20f), status, leftLabelStyle);
         }
 
@@ -294,6 +317,27 @@ namespace Unity2DJumpStart
 
             TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
             string skipReason = GetSkipReason(importer);
+            Vector4 currentBorder = importer != null ? importer.spriteBorder : Vector4.zero;
+            int spriteCount = 0;
+            bool hasMixedBorders = false;
+
+            if (importer != null && currentTab == SliceTab.MultipleSprites && string.IsNullOrEmpty(skipReason))
+            {
+                SpriteMetaData[] spriteSheet = importer.spritesheet;
+                spriteCount = spriteSheet == null ? 0 : spriteSheet.Length;
+                if (spriteCount > 0)
+                {
+                    currentBorder = spriteSheet[0].border;
+                    for (int i = 1; i < spriteSheet.Length; i++)
+                    {
+                        if (spriteSheet[i].border != currentBorder)
+                        {
+                            hasMixedBorders = true;
+                            break;
+                        }
+                    }
+                }
+            }
 
             textures.Add(new TextureData
             {
@@ -302,13 +346,15 @@ namespace Unity2DJumpStart
                 textureName = texture.name,
                 folder = GetFolderName(path),
                 size = new Vector2Int(texture.width, texture.height),
-                currentBorder = importer != null ? importer.spriteBorder : Vector4.zero,
+                currentBorder = currentBorder,
+                spriteCount = spriteCount,
+                hasMixedBorders = hasMixedBorders,
                 canApply = string.IsNullOrEmpty(skipReason),
                 skipReason = skipReason
             });
         }
 
-        private static string GetSkipReason(TextureImporter importer)
+        private string GetSkipReason(TextureImporter importer)
         {
             if (importer == null)
             {
@@ -320,9 +366,18 @@ namespace Unity2DJumpStart
                 return "Skipped: not a Sprite texture";
             }
 
-            if (importer.spriteImportMode != SpriteImportMode.Single)
+            SpriteImportMode expectedMode = currentTab == SliceTab.SingleSprite ? SpriteImportMode.Single : SpriteImportMode.Multiple;
+            if (importer.spriteImportMode != expectedMode)
             {
-                return "Skipped: Sprite Mode is Multiple";
+                return currentTab == SliceTab.SingleSprite
+                    ? "Skipped: Sprite Mode is Multiple"
+                    : "Skipped: Sprite Mode is Single";
+            }
+
+            if (currentTab == SliceTab.MultipleSprites &&
+                (importer.spritesheet == null || importer.spritesheet.Length == 0))
+            {
+                return "Skipped: no sprite metadata";
             }
 
             return string.Empty;
@@ -333,10 +388,13 @@ namespace Unity2DJumpStart
             int eligibleCount = CountEligibleTextures();
             int processedCount = 0;
             int clampedCount = 0;
+            int affectedSpriteCount = 0;
 
             if (!EditorUtility.DisplayDialog(
                 "Apply Texture Borders",
-                "This will change the sprite border values and reimport all eligible single-sprite textures in the current list.",
+                currentTab == SliceTab.SingleSprite
+                    ? "This will change the sprite border values and reimport all eligible single-sprite textures in the current list."
+                    : "This will change the border values of every sprite in the eligible multiple-sprite textures and reimport them.",
                 "Apply",
                 "Cancel"))
             {
@@ -364,13 +422,41 @@ namespace Unity2DJumpStart
                         continue;
                     }
 
-                    Vector4 border = GetClampedBorder(data.size, out bool wasClamped);
-                    if (wasClamped)
+                    if (currentTab == SliceTab.SingleSprite)
                     {
-                        clampedCount++;
+                        Vector4 border = GetClampedBorder(data.size, out bool wasClamped);
+                        if (wasClamped)
+                        {
+                            clampedCount++;
+                        }
+
+                        importer.spriteBorder = border;
+                        affectedSpriteCount++;
+                    }
+                    else
+                    {
+                        SpriteMetaData[] spriteSheet = importer.spritesheet;
+                        if (spriteSheet == null || spriteSheet.Length == 0)
+                        {
+                            continue;
+                        }
+                        for (int spriteIndex = 0; spriteIndex < spriteSheet.Length; spriteIndex++)
+                        {
+                            Vector2Int spriteSize = new Vector2Int(
+                                Mathf.RoundToInt(spriteSheet[spriteIndex].rect.width),
+                                Mathf.RoundToInt(spriteSheet[spriteIndex].rect.height));
+                            spriteSheet[spriteIndex].border = GetClampedBorder(spriteSize, out bool wasClamped);
+                            if (wasClamped)
+                            {
+                                clampedCount++;
+                            }
+
+                            affectedSpriteCount++;
+                        }
+
+                        importer.spritesheet = spriteSheet;
                     }
 
-                    importer.spriteBorder = border;
                     importer.SaveAndReimport();
                     processedCount++;
                 }
@@ -381,7 +467,7 @@ namespace Unity2DJumpStart
             }
 
             ScanTextures();
-            statusMessage = $"Applied borders to {processedCount} texture(s). {clampedCount} texture(s) required border clamping.";
+            statusMessage = $"Applied borders to {affectedSpriteCount} sprite(s) across {processedCount} texture(s). {clampedCount} border value(s) required clamping.";
         }
 
         private Vector4 GetClampedBorder(Vector2Int textureSize, out bool wasClamped)
