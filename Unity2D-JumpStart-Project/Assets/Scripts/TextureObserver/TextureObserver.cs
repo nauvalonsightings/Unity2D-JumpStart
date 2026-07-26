@@ -25,6 +25,8 @@ namespace Unity2DJumpStart
             public string compression;
             public bool isDivisibleBy4;
             public bool isOptimized;
+            public FilterMode filterMode;
+            public SpriteImportMode spriteImportMode;
         }
 
         private List<TextureData> textureList = new List<TextureData>();
@@ -34,13 +36,17 @@ namespace Unity2DJumpStart
         private string searchQuery = "";
         private List<TextureData> filteredTextureList = new List<TextureData>();
         private List<DefaultAsset> targetFolders = new List<DefaultAsset>();
+        private bool includeSubfolders = true;
         
         // Pagination and Sorting
         private int itemsPerPage = 20;
         private int currentPage = 0;
+        private string statusMessage = "";
 
         // Tabs and Layout
         private int currentTab = 0;
+        private FilterMode bulkFilterMode = FilterMode.Bilinear;
+        private SpriteImportMode bulkSpriteMode = SpriteImportMode.Single;
 
         // Column Resizing State
         private float[] colWidths = { 40f, 50f, 200f, 100f, 100f };
@@ -90,13 +96,25 @@ namespace Unity2DJumpStart
             }
 
             GUILayout.Label("Texture Observer", EditorStyles.boldLabel);
-            EditorGUILayout.HelpBox("Scan your project to find large textures. Click an entry to find it in the Project tab.", MessageType.Info);
+            EditorGUILayout.HelpBox(
+                currentTab == 2
+                    ? "Change the filter mode of Sprite textures in bulk."
+                    : currentTab == 3
+                        ? "Change the Sprite Mode of Sprite textures in bulk."
+                        : "Scan your project to find large textures. Click an entry to find it in the Project tab.",
+                MessageType.Info);
 
             EditorGUILayout.Space();
 
             // Tabs
             int previousTab = currentTab;
-            currentTab = GUILayout.Toolbar(currentTab, new string[] { "Texture Observer", "Compression Bulk Change" });
+            currentTab = GUILayout.Toolbar(currentTab, new string[]
+            {
+                "Texture Observer",
+                "Compression Bulk Change",
+                "Filter Mode Bulk Change",
+                "Sprite Mode Bulk Change"
+            });
             if (currentTab != previousTab)
             {
                 // Reset resize state when switching tabs to prevent state corruption
@@ -130,6 +148,16 @@ namespace Unity2DJumpStart
                 }
             }
 
+            if (currentTab == 2)
+            {
+                bulkFilterMode = (FilterMode)EditorGUILayout.EnumPopup("New Filter Mode", bulkFilterMode);
+            }
+
+            if (currentTab == 3)
+            {
+                bulkSpriteMode = (SpriteImportMode)EditorGUILayout.EnumPopup("New Sprite Mode", bulkSpriteMode);
+            }
+
             EditorGUILayout.Space();
 
             // Search Bar
@@ -144,6 +172,7 @@ namespace Unity2DJumpStart
 
             // Target Folders Layout
             EditorGUILayout.LabelField("Target Folders (Leave empty to scan entire project):");
+            includeSubfolders = EditorGUILayout.ToggleLeft("Include subfolders", includeSubfolders);
             for (int i = 0; i < targetFolders.Count; i++)
             {
                 EditorGUILayout.BeginHorizontal();
@@ -169,12 +198,18 @@ namespace Unity2DJumpStart
             EditorGUILayout.BeginHorizontal();
             itemsPerPage = Mathf.Max(1, EditorGUILayout.IntField("Items Per Page", itemsPerPage));
             
-            if (GUILayout.Button("Populate Textures", GUILayout.Height(21)))
+            string populateLabel = currentTab >= 2 ? "Populate Sprite Textures" : "Populate Textures";
+            if (GUILayout.Button(populateLabel, GUILayout.Height(21)))
             {
                 ScanTextures();
                 GUIUtility.ExitGUI();
             }
             EditorGUILayout.EndHorizontal();
+
+            if (!string.IsNullOrEmpty(statusMessage))
+            {
+                EditorGUILayout.LabelField(statusMessage, EditorStyles.wordWrappedLabel);
+            }
 
             if (filteredTextureList.Count > 0)
             {
@@ -201,9 +236,14 @@ namespace Unity2DJumpStart
                     string[] headers = { "No.", "Thumb", "Name", "Resolution", "Size", "Format" };
                     DrawHeader(headers, colWidths);
                 }
-                else
+                else if (currentTab == 1)
                 {
                     string[] headers = { "No.", "Thumb", "Name", "Resolution", "Size", "Divisible by 4?", "Action", "Highlight" };
+                    DrawHeader(headers, bulkColWidths);
+                }
+                else
+                {
+                    string[] headers = { "No.", "Thumb", "Name", "Folder", "Resolution", "Current", "Status" };
                     DrawHeader(headers, bulkColWidths);
                 }
                 
@@ -215,11 +255,12 @@ namespace Unity2DJumpStart
                 for (int i = startIndex; i < endIndex; i++)
                 {
                     if (currentTab == 0) DrawTextureRowObserver(i, filteredTextureList[i]);
-                    else DrawTextureRowBulk(i, filteredTextureList[i]);
+                    else if (currentTab == 1) DrawTextureRowBulk(i, filteredTextureList[i]);
+                    else DrawTextureRowSetting(i, filteredTextureList[i]);
                 }
                 EditorGUILayout.EndScrollView();
 
-                // Giant Bulk Buttons at the bottom of the Bulk Tab
+                // Giant Bulk Buttons at the bottom of the Compression tab
                 if (currentTab == 1)
                 {
                     EditorGUILayout.Space();
@@ -235,6 +276,17 @@ namespace Unity2DJumpStart
                         GUIUtility.ExitGUI();
                     }
                     EditorGUILayout.EndHorizontal();
+                }
+
+                if (currentTab == 2 || currentTab == 3)
+                {
+                    EditorGUILayout.Space();
+                    if (GUILayout.Button(currentTab == 2 ? "Apply Filter Mode" : "Apply Sprite Mode", GUILayout.Height(40)))
+                    {
+                        if (currentTab == 2) ApplyBulkFilterMode();
+                        else ApplyBulkSpriteMode();
+                        GUIUtility.ExitGUI();
+                    }
                 }
             }
             else
@@ -363,6 +415,37 @@ namespace Unity2DJumpStart
             }
         }
 
+        private void DrawTextureRowSetting(int index, TextureData data)
+        {
+            Rect rowRect = EditorGUILayout.GetControlRect(false, 40, GUILayout.ExpandWidth(true));
+
+            float x = rowRect.x;
+            GUI.Label(new Rect(x, rowRect.y + 12, bulkColWidths[0], 20), (index + 1).ToString(), centerLabelStyle); x += bulkColWidths[0];
+
+            Texture2D thumb = AssetPreview.GetAssetPreview(data.texture);
+            if (thumb == null) thumb = AssetPreview.GetMiniThumbnail(data.texture);
+            if (thumb == null) thumb = data.texture;
+
+            GUI.DrawTexture(new Rect(x + (bulkColWidths[1] - 30) / 2, rowRect.y + 5, 30, 30), thumb, ScaleMode.ScaleToFit); x += bulkColWidths[1];
+            GUI.Label(new Rect(x + 5, rowRect.y + 12, bulkColWidths[2] - 5, 20), data.name, leftLabelStyle); x += bulkColWidths[2];
+
+            string folder = System.IO.Path.GetDirectoryName(data.path)?.Replace("\\", "/") ?? "Assets";
+            GUI.Label(new Rect(x + 5, rowRect.y + 12, bulkColWidths[3] - 5, 20), folder, leftLabelStyle); x += bulkColWidths[3];
+            GUI.Label(new Rect(x, rowRect.y + 12, bulkColWidths[4], 20), $"{data.resolution.x}x{data.resolution.y}", centerLabelStyle); x += bulkColWidths[4];
+
+            string currentValue = currentTab == 2 ? data.filterMode.ToString() : data.spriteImportMode.ToString();
+            GUI.Label(new Rect(x, rowRect.y + 12, bulkColWidths[5], 20), currentValue, centerLabelStyle); x += bulkColWidths[5];
+
+            bool unchanged = currentTab == 2 ? data.filterMode == bulkFilterMode : data.spriteImportMode == bulkSpriteMode;
+            string status = unchanged ? "Unchanged" : "Ready";
+            float lastColumnWidth = rowRect.width - (x - rowRect.x);
+            if (GUI.Button(new Rect(x + 5, rowRect.y + 10, lastColumnWidth - 10, 20), status))
+            {
+                EditorGUIUtility.PingObject(data.texture);
+                Selection.activeObject = data.texture;
+            }
+        }
+
         private long GetStorageSize(Texture2D tex)
         {
             if (getStorageMemorySizeMethod == null)
@@ -426,10 +509,21 @@ namespace Unity2DJumpStart
             foreach (string guid in guids)
             {
                 string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!IsInTargetFolderScope(path, searchPaths))
+                {
+                    continue;
+                }
+
                 Texture2D tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
 
                 if (tex != null)
                 {
+                    TextureImporter importer = AssetImporter.GetAtPath(path) as TextureImporter;
+                    if (currentTab >= 2 && (importer == null || importer.textureType != TextureImporterType.Sprite))
+                    {
+                        continue;
+                    }
+
                     long bytes = GetStorageSize(tex);
                     
                     textureList.Add(new TextureData
@@ -442,7 +536,9 @@ namespace Unity2DJumpStart
                         formattedSize = FormatBytes(bytes),
                         compression = tex.format.ToString(),
                         isDivisibleBy4 = (tex.width % 4 == 0) && (tex.height % 4 == 0),
-                        isOptimized = IsTextureOptimized(path)
+                        isOptimized = IsTextureOptimized(path),
+                        filterMode = importer != null ? importer.filterMode : FilterMode.Bilinear,
+                        spriteImportMode = importer != null ? importer.spriteImportMode : SpriteImportMode.Single
                     });
                 }
             }
@@ -452,6 +548,25 @@ namespace Unity2DJumpStart
             
             // Apply the filter instantly so the UI populates
             ApplySearchFilter();
+        }
+
+        private bool IsInTargetFolderScope(string assetPath, List<string> searchPaths)
+        {
+            if (includeSubfolders)
+            {
+                return true;
+            }
+
+            string parentPath = System.IO.Path.GetDirectoryName(assetPath)?.Replace("\\", "/");
+            foreach (string searchPath in searchPaths)
+            {
+                if (string.Equals(parentPath, searchPath, System.StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void ApplySearchFilter()
@@ -560,6 +675,116 @@ namespace Unity2DJumpStart
                 }
             }
             EditorUtility.ClearProgressBar();
+        }
+
+        private void ApplyBulkFilterMode()
+        {
+            int changedCount = 0;
+            int unchangedCount = 0;
+
+            if (!EditorUtility.DisplayDialog(
+                "Apply Filter Mode",
+                $"This will set the filter mode of the listed Sprite textures to {bulkFilterMode} and reimport the changed assets.",
+                "Apply",
+                "Cancel"))
+            {
+                return;
+            }
+
+            try
+            {
+                for (int i = 0; i < filteredTextureList.Count; i++)
+                {
+                    TextureData data = filteredTextureList[i];
+                    TextureImporter importer = AssetImporter.GetAtPath(data.path) as TextureImporter;
+                    if (importer == null)
+                    {
+                        continue;
+                    }
+
+                    if (importer.filterMode == bulkFilterMode)
+                    {
+                        unchangedCount++;
+                        continue;
+                    }
+
+                    EditorUtility.DisplayProgressBar(
+                        "Applying Filter Mode",
+                        $"Processing {data.name} ({changedCount + 1}/{filteredTextureList.Count})",
+                        (float)i / filteredTextureList.Count);
+
+                    importer.filterMode = bulkFilterMode;
+                    importer.SaveAndReimport();
+                    changedCount++;
+                }
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+
+            ScanTextures();
+            statusMessage = $"Changed {changedCount} Sprite texture(s) to {bulkFilterMode}. {unchangedCount} texture(s) were already using that mode.";
+        }
+
+        private void ApplyBulkSpriteMode()
+        {
+            int changedCount = 0;
+            int unchangedCount = 0;
+            bool changesMultipleToSingle = false;
+
+            for (int i = 0; i < filteredTextureList.Count; i++)
+            {
+                if (filteredTextureList[i].spriteImportMode == SpriteImportMode.Multiple && bulkSpriteMode == SpriteImportMode.Single)
+                {
+                    changesMultipleToSingle = true;
+                    break;
+                }
+            }
+
+            string warning = changesMultipleToSingle
+                ? "This includes Multiple-sprite textures. Changing them to Single changes how their sprite-sheet metadata is interpreted and may affect existing sprite references. Continue?"
+                : $"This will set the Sprite Mode of the listed Sprite textures to {bulkSpriteMode} and reimport the changed assets. Continue?";
+
+            if (!EditorUtility.DisplayDialog("Apply Sprite Mode", warning, "Apply", "Cancel"))
+            {
+                return;
+            }
+
+            try
+            {
+                for (int i = 0; i < filteredTextureList.Count; i++)
+                {
+                    TextureData data = filteredTextureList[i];
+                    TextureImporter importer = AssetImporter.GetAtPath(data.path) as TextureImporter;
+                    if (importer == null)
+                    {
+                        continue;
+                    }
+
+                    if (importer.spriteImportMode == bulkSpriteMode)
+                    {
+                        unchangedCount++;
+                        continue;
+                    }
+
+                    EditorUtility.DisplayProgressBar(
+                        "Applying Sprite Mode",
+                        $"Processing {data.name} ({changedCount + 1}/{filteredTextureList.Count})",
+                        (float)i / filteredTextureList.Count);
+
+                    importer.spriteImportMode = bulkSpriteMode;
+                    importer.SaveAndReimport();
+                    changedCount++;
+                }
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+
+            ScanTextures();
+            statusMessage = $"Changed {changedCount} Sprite texture(s) to {bulkSpriteMode}. {unchangedCount} texture(s) were already using that mode.";
         }
 
         private string FormatBytes(long bytes)
